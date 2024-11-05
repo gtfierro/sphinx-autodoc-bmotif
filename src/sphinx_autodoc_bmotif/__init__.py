@@ -31,23 +31,7 @@ class BuildingMOTIFLibraryDirective(Directive):
         #template_path = root.joinpath(self.arguments[0])
         #template_path = srcdir.joinpath(template_path)
 
-        self._parse_library(self.arguments[0])
-
-        return output_nodes
-
-    def _build_template(self, template):
-        # Create a new ViewList and add the title
-        view = ViewList()
-        view.append(f"{template.name}", '<autobmotiflib>', 0)
-        
-        # Create a new document
-        doc = new_document('<autobmotiflib>')
-        
-        # Parse the ViewList into the document
-        parser = self.state.document.settings.env.app.builder.env.get_doctree_parser('rst')
-        parser.parse(view, doc)
-        
-        return doc
+        return list(self._parse_library(self.arguments[0]))
 
     def _parse_library(self, library_directory):
         print(f"library_directory: {library_directory}")
