@@ -67,6 +67,12 @@ class AutoTemplateDoc(SphinxDirective):
 
 {turtle}
 
+.. collapse:: Template with Inline Dependencies
+
+        .. code-block:: turtle
+
+        {inlined_turtle}
+
 Parameters
 ----------
 
@@ -77,7 +83,7 @@ Dependencies
 
 {dependencies}
 
-Backlinks
+Dependents
 ---------
 
 {backlinks}
@@ -109,17 +115,23 @@ Graphviz
             if not backlinks:
                 backlinks = "No templates depend on this template."
 
+            inlined = templ.inline_dependencies()
+
             # Serialize Turtle representation
             serialized_body = templ.body.serialize(format="turtle")
             serialized_body = "\n".join(f"    {line}" for line in serialized_body.split("\n"))
 
+            serialized_inlined = inlined.body.serialize(format="turtle")
+            serialized_inlined = "\n".join(f"    {line}" for line in serialized_inlined.split("\n"))
+
             # Graphviz representations
             graphviz_simple = build_graphviz(templ.body)
-            graphviz_expanded = build_graphviz(templ.inline_dependencies().body, indent=2)
+            graphviz_expanded = build_graphviz(inlined.body, indent=2)
 
             # Create .rst content for each template
             rst_content = rst_template.format(
                 name=name, padding=padding, turtle=serialized_body,
+                inlined_turtle=serialized_inlined,
                 parameters=parameters, dependencies=dependencies,
                 backlinks=backlinks,  # Add backlinks here
                 graphviz_simple=graphviz_simple, graphviz_expanded=graphviz_expanded
