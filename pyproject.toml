@@ -11,6 +11,7 @@ dependencies = [
     "buildingmotif[topquadrant]",
     "docutils<0.21",
     "pydot>=3.0.2",
+    "sphinx-tabs>=3.4.5",
     "sphinx-toolbox>=3.8.1",
     "sphinx<8.0",
 ]

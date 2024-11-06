@@ -38,7 +38,7 @@ def build_graphviz(g: rdflib.Graph, indent=1):
     buf = io.StringIO()
     rdf2dot(g, buf)
     dot = pydot.graph_from_dot_data(buf.getvalue())
-    return "\n".join(f"{' '*4*indent}{line}" for line in dot[0].to_string().split("\n"))
+    return "\n".join(f"{' '*6*indent}{line}" for line in dot[0].to_string().split("\n"))
 
 def build_dependencies_parameter_string(dependency_map):
     # dependency_map maps our parameter names to the template they depend on
@@ -50,7 +50,7 @@ def build_dependencies_parameter_string(dependency_map):
         if template == "":
             dependencies += f"- {param}\n"
         else:
-            dependencies += f"- {param} depends on {link}\n"
+            dependencies += f"- {param} is a {link}\n"
     return dependencies
 
 class AutoTemplateDoc(SphinxDirective):
@@ -101,13 +101,17 @@ class AutoTemplateDoc(SphinxDirective):
 {name}
 {padding}
 
-.. code:: turtle
+.. tabs::
+
+    .. tab:: Turtle
+
+        .. code:: turtle
 
 {turtle}
 
-.. collapse:: Template with Inline Dependencies
+    .. tab:: With Inline Dependencies
 
-    .. code:: turtle
+        .. code:: turtle
 
 {inlined_turtle}
 
@@ -126,23 +130,28 @@ Dependents
 
 {backlinks}
 
-Graphviz
---------
+Graph Visualization
+--------------------
 
-.. graphviz::
+.. tabs::
+
+    .. tab:: Template
+
+        .. graphviz::
 
     {graphviz_simple}
 
-.. collapse:: Template With Inline Dependencies
+    .. tab:: With Inline Dependencies
 
-    .. graphviz::
+        .. graphviz::
 
-        {graphviz_expanded}
+    {graphviz_expanded}
 """
 
         # Generate .rst files for each template
         for templ in lib.get_templates():
             name = templ.name
+            templ.body.bind("P", rdflib.Namespace("urn:___param___#"))
             template_names.append(name)
             parameters = "\n".join(f"- {param}" for param in templ.parameters)
             dependencies = build_dependencies_string(templ)
@@ -151,19 +160,20 @@ Graphviz
             # Generate backlinks section
             backlinks = "\n".join(f"- :doc:`{dep_name}`" for dep_name in backlinks_map[name])
             if not backlinks:
-                backlinks = "No templates depend on this template."
+                backlinks = "Nothing depends on this template."
 
             inlined = templ.inline_dependencies()
+            inlined.body.bind("P", rdflib.Namespace("urn:___param___#"))
 
             # Serialize Turtle representation
             serialized_body = templ.body.serialize(format="turtle")
-            serialized_body = "\n".join(f"    {line}" for line in serialized_body.split("\n"))
+            serialized_body = "\n".join(f"           {line}" for line in serialized_body.split("\n"))
 
             serialized_inlined = inlined.body.serialize(format="turtle")
-            serialized_inlined = "\n".join(f"        {line}".rstrip() for line in serialized_inlined.split("\n"))
+            serialized_inlined = "\n".join(f"            {line}".rstrip() for line in serialized_inlined.split("\n"))
 
             # Graphviz representations
-            graphviz_simple = build_graphviz(templ.body)
+            graphviz_simple = build_graphviz(templ.body, indent=2)
             graphviz_expanded = build_graphviz(inlined.body, indent=2)
 
             parameter_map = build_dependencies_parameter_string(template_dependency_maps[name])
