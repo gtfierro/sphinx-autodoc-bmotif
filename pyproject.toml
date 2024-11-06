@@ -10,6 +10,8 @@ requires-python = ">=3.10"
 dependencies = [
     "buildingmotif[topquadrant]",
     "docutils>=0.21.2",
+    "pydot>=3.0.2",
+    "sphinx-toolbox>=3.8.1",
     "sphinx>=8.1.3",
 ]
 
