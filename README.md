@@ -4,3 +4,4 @@ Needs these plugins:
 - `sphinx.ext.graphviz`
 - `sphinx_toolbox.collapse`
 - `sphinx_toolbox.code`
+- `sphinx_tabs.tabs`
