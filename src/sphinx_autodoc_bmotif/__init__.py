@@ -11,15 +11,27 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
+def build_dependency_link(template):
+    if template == "":
+        return ""
+    if str(template.defining_library.name) == "https://brickschema.org/schema/1.4/Brick":
+        ns, _, value = template.body.compute_qname(template.name)
+        link = f"https://ontology.brickschema.org/{ns}/{value}.html"
+        return f"`{template.name} <{link}>`_"
+    else:
+        return f":doc:`{template.name}`"
+
 def build_dependencies_string(template):
     dependencies = ""
     for dep in template.get_dependencies():
-        if str(dep.template.defining_library.name) == "https://brickschema.org/schema/1.4/Brick":
-            ns, _, value = dep.template.body.compute_qname(dep.template.name)
-            link = f"https://ontology.brickschema.org/{ns}/{value}.html"
-            dependencies += f"- `{dep.template.name} <{link}>`_\n"
-        else:
-            dependencies += f"- :doc:`{dep.template.name}`\n"
+        link = build_dependency_link(dep.template)
+        dependencies += f"- {link}\n"
+        #if str(dep.template.defining_library.name) == "https://brickschema.org/schema/1.4/Brick":
+        #    ns, _, value = dep.template.body.compute_qname(dep.template.name)
+        #    link = f"https://ontology.brickschema.org/{ns}/{value}.html"
+        #    dependencies += f"- `{dep.template.name} <{link}>`_\n"
+        #else:
+        #    dependencies += f"- :doc:`{dep.template.name}`\n"
     return dependencies
 
 def build_graphviz(g: rdflib.Graph, indent=1):
@@ -27,6 +39,19 @@ def build_graphviz(g: rdflib.Graph, indent=1):
     rdf2dot(g, buf)
     dot = pydot.graph_from_dot_data(buf.getvalue())
     return "\n".join(f"{' '*4*indent}{line}" for line in dot[0].to_string().split("\n"))
+
+def build_dependencies_parameter_string(dependency_map):
+    # dependency_map maps our parameter names to the template they depend on
+    # build up a list of the parameter names and the template they depend on, with the template name as a link
+    dependencies = ""
+    for param, template in dependency_map.items():
+        # if template is empty string, just add the parameter name
+        link = build_dependency_link(template)
+        if template == "":
+            dependencies += f"- {param}\n"
+        else:
+            dependencies += f"- {param} depends on {link}\n"
+    return dependencies
 
 class AutoTemplateDoc(SphinxDirective):
     has_content = True
@@ -52,31 +77,44 @@ class AutoTemplateDoc(SphinxDirective):
         # Create a map to track backlinks (i.e., which templates depend on each template)
         backlinks_map = defaultdict(list)
 
+        template_dependency_maps = {}
+
         # First, populate the backlinks map by going through each template's dependencies
         for template in lib.get_templates():
+            # keep track of which dependencies map to which parameters
+            dependency_map = defaultdict(dict)
             for dep in template.get_dependencies():
                 # Record that the current template depends on this dependency template
                 backlinks_map[dep.template.name].append(template.name)
+                # loop through the dependency's arguments and map them to the current template's parameters
+                for _, template_arg in dep.args.items():
+                    dependency_map[template_arg] = dep.template
+            # add all extra parameters to dependency_map; if they don't already appear in the map, then they have an empty string dependency
+            for param in template.parameters:
+                if param not in dependency_map:
+                    dependency_map[param] = ""
+            template_dependency_maps[template.name] = dependency_map
+
 
         # Template for .rst files
         rst_template = """
 {name}
 {padding}
 
-.. code-block:: turtle
+.. code:: turtle
 
 {turtle}
 
 .. collapse:: Template with Inline Dependencies
 
-        .. code-block:: turtle
+    .. code:: turtle
 
-        {inlined_turtle}
+{inlined_turtle}
 
 Parameters
 ----------
 
-{parameters}
+{parameter_map}
 
 Dependencies
 ------------
@@ -84,7 +122,7 @@ Dependencies
 {dependencies}
 
 Dependents
----------
+----------
 
 {backlinks}
 
@@ -122,11 +160,13 @@ Graphviz
             serialized_body = "\n".join(f"    {line}" for line in serialized_body.split("\n"))
 
             serialized_inlined = inlined.body.serialize(format="turtle")
-            serialized_inlined = "\n".join(f"    {line}" for line in serialized_inlined.split("\n"))
+            serialized_inlined = "\n".join(f"        {line}".rstrip() for line in serialized_inlined.split("\n"))
 
             # Graphviz representations
             graphviz_simple = build_graphviz(templ.body)
             graphviz_expanded = build_graphviz(inlined.body, indent=2)
+
+            parameter_map = build_dependencies_parameter_string(template_dependency_maps[name])
 
             # Create .rst content for each template
             rst_content = rst_template.format(
@@ -134,6 +174,7 @@ Graphviz
                 inlined_turtle=serialized_inlined,
                 parameters=parameters, dependencies=dependencies,
                 backlinks=backlinks,  # Add backlinks here
+                parameter_map=parameter_map,
                 graphviz_simple=graphviz_simple, graphviz_expanded=graphviz_expanded
             )
 
