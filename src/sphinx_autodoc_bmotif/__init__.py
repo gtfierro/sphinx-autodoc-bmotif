@@ -27,7 +27,7 @@ def build_dependencies_string(template):
     for dep in template.get_dependencies():
         link = build_dependency_link(dep.template)
         links.add(link)
-    for link in links:
+    for link in sorted(links):
         dependencies += f"- {link}\n"
         #if str(dep.template.defining_library.name) == "https://brickschema.org/schema/1.4/Brick":
         #    ns, _, value = dep.template.body.compute_qname(dep.template.name)
@@ -78,7 +78,7 @@ class AutoTemplateDoc(SphinxDirective):
         template_names = []
 
         # Create a map to track backlinks (i.e., which templates depend on each template)
-        backlinks_map = defaultdict(list)
+        backlinks_map = defaultdict(set)
 
         template_dependency_maps = {}
 
@@ -88,7 +88,7 @@ class AutoTemplateDoc(SphinxDirective):
             dependency_map = defaultdict(dict)
             for dep in template.get_dependencies():
                 # Record that the current template depends on this dependency template
-                backlinks_map[dep.template.name].append(template.name)
+                backlinks_map[dep.template.name].add(template.name)
                 # loop through the dependency's arguments and map them to the current template's parameters
                 for _, template_arg in dep.args.items():
                     dependency_map[template_arg] = dep.template
@@ -161,7 +161,7 @@ Graph Visualization
             padding = "#" * len(name)
 
             # Generate backlinks section
-            backlinks = "\n".join(f"- :doc:`{dep_name}`" for dep_name in backlinks_map[name])
+            backlinks = "\n".join(f"- :doc:`{dep_name}`" for dep_name in sorted(backlinks_map[name]))
             if not backlinks:
                 backlinks = "Nothing depends on this template."
 
