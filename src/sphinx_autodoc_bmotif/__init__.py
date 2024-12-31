@@ -23,8 +23,11 @@ def build_dependency_link(template):
 
 def build_dependencies_string(template):
     dependencies = ""
+    links = set()
     for dep in template.get_dependencies():
         link = build_dependency_link(dep.template)
+        links.add(link)
+    for link in links:
         dependencies += f"- {link}\n"
         #if str(dep.template.defining_library.name) == "https://brickschema.org/schema/1.4/Brick":
         #    ns, _, value = dep.template.body.compute_qname(dep.template.name)
