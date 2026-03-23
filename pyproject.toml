@@ -1,7 +1,7 @@
 [project]
 name = "sphinx-autodoc-bmotif"
-version = "0.1.6"
-description = "Add your description here"
+version = "0.2.0"
+description = "Generate documentation for BuildingMOTIF templates (Jupyter Book v2 / mystmd)"
 readme = "README.md"
 authors = [
     { name = "Gabe Fierro", email = "gtfierro@mines.edu" }
@@ -9,12 +9,12 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
     "buildingmotif[topquadrant]",
-    "docutils<0.21",
     "pydot>=3.0.2",
-    "sphinx-tabs>=3.4.5",
-    "sphinx-toolbox>=3.8.1",
-    "sphinx<8.0",
 ]
+
+[project.scripts]
+sphinx-autodoc-bmotif = "sphinx_autodoc_bmotif.__main__:main"
+sphinx-autodoc-bmotif-plugin = "sphinx_autodoc_bmotif.myst_plugin:main"
 
 [build-system]
 requires = ["hatchling"]

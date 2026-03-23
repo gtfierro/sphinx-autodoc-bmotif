@@ -1,6 +1,5 @@
 import os
-from sphinx.util import logging
-from sphinx.util.docutils import SphinxDirective
+import logging
 from buildingmotif import BuildingMOTIF
 from buildingmotif.dataclasses import Library
 import rdflib
@@ -11,215 +10,380 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
-def build_dependency_link(template):
+
+def _resolve_dependency_link(template):
+    """Return a dict describing a dependency link.
+
+    Returns {"text": ..., "url": ...} for external Brick links,
+    {"text": ..., "doc": ...} for local template references,
+    or None for empty templates.
+    """
     if template == "":
-        return ""
+        return None
     if str(template.defining_library.name) == "https://brickschema.org/schema/1.4/Brick":
         ns, _, value = template.body.compute_qname(template.name)
-        link = f"https://ontology.brickschema.org/{ns}/{value}.html"
-        return f"`{template.name} <{link}>`_"
+        url = f"https://ontology.brickschema.org/{ns}/{value}.html"
+        return {"text": str(template.name), "url": url}
     else:
-        return f":doc:`{template.name}`"
+        return {"text": str(template.name), "doc": str(template.name)}
 
-def build_dependencies_string(template):
-    dependencies = ""
-    links = set()
-    for dep in template.get_dependencies():
-        link = build_dependency_link(dep.template)
-        links.add(link)
-    for link in sorted(links):
-        dependencies += f"- {link}\n"
-        #if str(dep.template.defining_library.name) == "https://brickschema.org/schema/1.4/Brick":
-        #    ns, _, value = dep.template.body.compute_qname(dep.template.name)
-        #    link = f"https://ontology.brickschema.org/{ns}/{value}.html"
-        #    dependencies += f"- `{dep.template.name} <{link}>`_\n"
-        #else:
-        #    dependencies += f"- :doc:`{dep.template.name}`\n"
-    return dependencies
 
-def build_graphviz(g: rdflib.Graph, indent=1):
+def _format_md_link(link_info):
+    """Format a link dict as a MyST markdown link."""
+    if link_info is None:
+        return ""
+    if "url" in link_info:
+        return f"[{link_info['text']}]({link_info['url']})"
+    else:
+        return f"[{link_info['text']}]({link_info['doc']}.md)"
+
+
+def _render_svg(g: rdflib.Graph) -> str:
+    """Render an RDF graph to SVG string via DOT/pydot."""
     buf = io.StringIO()
     rdf2dot(g, buf)
     dot = pydot.graph_from_dot_data(buf.getvalue())
-    return "\n".join(f"{' '*6*indent}{line}" for line in dot[0].to_string().split("\n"))
+    return dot[0].create_svg().decode("utf-8")
 
-def build_dependencies_parameter_string(dependency_map):
-    # dependency_map maps our parameter names to the template they depend on
-    # build up a list of the parameter names and the template they depend on, with the template name as a link
-    dependencies = ""
-    for param, template in dependency_map.items():
-        # if template is empty string, just add the parameter name
-        link = build_dependency_link(template)
-        if template == "":
-            dependencies += f"- {param}\n"
+
+def _build_ast_link(link_info):
+    """Convert a link dict to a MyST AST node."""
+    if link_info is None:
+        return None
+    if "url" in link_info:
+        return {
+            "type": "link",
+            "url": link_info["url"],
+            "children": [{"type": "text", "value": link_info["text"]}],
+        }
+    else:
+        return {
+            "type": "crossReference",
+            "identifier": link_info["doc"],
+            "children": [{"type": "text", "value": link_info["text"]}],
+        }
+
+
+def load_library(lib_dir):
+    """Load a BuildingMOTIF library and return structured template data.
+
+    Returns a list of dicts, each containing:
+        name, turtle, inlined_turtle, parameter_map, dependencies,
+        backlinks, svg_simple, svg_expanded
+    """
+    bm = BuildingMOTIF("sqlite://")
+    Library.load(
+        ontology_graph="https://brickschema.org/schema/1.4/Brick.ttl",
+        infer_templates=True,
+        run_shacl_inference=False,
+    )
+    lib = Library.load(directory=lib_dir, infer_templates=False, run_shacl_inference=False)
+
+    # Build backlinks map and dependency maps
+    backlinks_map = defaultdict(set)
+    template_dependency_maps = {}
+
+    for template in lib.get_templates():
+        dependency_map = defaultdict(dict)
+        for dep in template.get_dependencies():
+            backlinks_map[dep.template.name].add(template.name)
+            for _, template_arg in dep.args.items():
+                dependency_map[template_arg] = dep.template
+        for param in template.parameters:
+            if param not in dependency_map:
+                dependency_map[param] = ""
+        template_dependency_maps[template.name] = dependency_map
+
+    results = []
+    for templ in lib.get_templates():
+        name = templ.name
+        templ.body.bind("P", rdflib.Namespace("urn:___param___#"))
+
+        inlined = templ.inline_dependencies()
+        inlined.body.bind("P", rdflib.Namespace("urn:___param___#"))
+
+        # Serialize Turtle
+        turtle = templ.body.serialize(format="turtle")
+        inlined_turtle = inlined.body.serialize(format="turtle")
+
+        # Build parameter map: list of (param_name, link_info_or_none)
+        param_map = []
+        for param, dep_template in template_dependency_maps[name].items():
+            link = _resolve_dependency_link(dep_template)
+            param_map.append((param, link))
+
+        # Build dependencies: list of link_info dicts
+        dep_links = set()
+        for dep in templ.get_dependencies():
+            link = _resolve_dependency_link(dep.template)
+            if link is not None:
+                dep_links.add((link["text"], link.get("url", ""), link.get("doc", "")))
+        dependencies = []
+        for text, url, doc in sorted(dep_links):
+            if url:
+                dependencies.append({"text": text, "url": url})
+            else:
+                dependencies.append({"text": text, "doc": doc})
+
+        # Build backlinks: list of local template names
+        backlinks = sorted(backlinks_map.get(name, set()))
+
+        # Render SVGs
+        svg_simple = _render_svg(templ.body)
+        svg_expanded = _render_svg(inlined.body)
+
+        results.append({
+            "name": name,
+            "turtle": turtle,
+            "inlined_turtle": inlined_turtle,
+            "parameter_map": param_map,
+            "dependencies": dependencies,
+            "backlinks": backlinks,
+            "svg_simple": svg_simple,
+            "svg_expanded": svg_expanded,
+        })
+
+    return results
+
+
+def generate_md_files(lib_dir, output_dir):
+    """Generate MyST markdown files for each template in a library.
+
+    Creates one .md file per template plus an index.md, along with .svg
+    files for graph visualizations.
+    """
+    lib_name = os.path.basename(lib_dir)
+    lib_output_dir = os.path.join(output_dir, lib_name)
+    os.makedirs(lib_output_dir, exist_ok=True)
+
+    templates = load_library(lib_dir)
+    template_names = []
+
+    for tmpl in templates:
+        name = tmpl["name"]
+        template_names.append(name)
+
+        # Write SVG files
+        svg_simple_path = f"{name}.svg"
+        svg_expanded_path = f"{name}-inlined.svg"
+        with open(os.path.join(lib_output_dir, svg_simple_path), "w") as f:
+            f.write(tmpl["svg_simple"])
+        with open(os.path.join(lib_output_dir, svg_expanded_path), "w") as f:
+            f.write(tmpl["svg_expanded"])
+
+        # Build parameter map section
+        param_lines = []
+        for param, link_info in tmpl["parameter_map"]:
+            if link_info is None:
+                param_lines.append(f"- {param}")
+            else:
+                param_lines.append(f"- {param} is a {_format_md_link(link_info)}")
+        param_section = "\n".join(param_lines) if param_lines else "No parameters."
+
+        # Build dependencies section
+        dep_lines = []
+        for link_info in tmpl["dependencies"]:
+            dep_lines.append(f"- {_format_md_link(link_info)}")
+        dep_section = "\n".join(dep_lines) if dep_lines else "No dependencies."
+
+        # Build backlinks section
+        if tmpl["backlinks"]:
+            backlink_lines = [f"- [{bl}]({bl}.md)" for bl in tmpl["backlinks"]]
+            backlink_section = "\n".join(backlink_lines)
         else:
-            dependencies += f"- {param} is a {link}\n"
-    return dependencies
+            backlink_section = "Nothing depends on this template."
 
-class AutoTemplateDoc(SphinxDirective):
-    has_content = True
-    required_arguments = 2  # Directory for templates, and output directory for .rst files
+        md_content = f"""# {name}
 
-    def run(self):
-        bm = BuildingMOTIF("sqlite://")
-        # Load Brick library
-        Library.load(ontology_graph="https://brickschema.org/schema/1.4/Brick.ttl", infer_templates=True, run_shacl_inference=False)
+:::{{tab-set}}
+::{{tab-item}} Turtle
+```turtle
+{tmpl["turtle"]}```
+::
+::{{tab-item}} With Inline Dependencies
+```turtle
+{tmpl["inlined_turtle"]}```
+::
+:::
 
-        # Load specified library
-        lib_dir = self.arguments[0]
-        output_dir = self.arguments[1]
+## Parameters
 
-        # Create library-specific directory
-        lib_name = os.path.basename(lib_dir)
-        lib_output_dir = os.path.join(output_dir, lib_name)
-        os.makedirs(lib_output_dir, exist_ok=True)
+{param_section}
 
-        lib = Library.load(directory=lib_dir, infer_templates=False, run_shacl_inference=False)
-        template_names = []
+## Dependencies
 
-        # Create a map to track backlinks (i.e., which templates depend on each template)
-        backlinks_map = defaultdict(set)
+{dep_section}
 
-        template_dependency_maps = {}
+## Dependents
 
-        # First, populate the backlinks map by going through each template's dependencies
-        for template in lib.get_templates():
-            # keep track of which dependencies map to which parameters
-            dependency_map = defaultdict(dict)
-            for dep in template.get_dependencies():
-                # Record that the current template depends on this dependency template
-                backlinks_map[dep.template.name].add(template.name)
-                # loop through the dependency's arguments and map them to the current template's parameters
-                for _, template_arg in dep.args.items():
-                    dependency_map[template_arg] = dep.template
-            # add all extra parameters to dependency_map; if they don't already appear in the map, then they have an empty string dependency
-            for param in template.parameters:
-                if param not in dependency_map:
-                    dependency_map[param] = ""
-            template_dependency_maps[template.name] = dependency_map
+{backlink_section}
 
+## Graph Visualization
 
-        # Template for .rst files
-        rst_template = """
-{name}
-{padding}
-
-.. tabs::
-
-    .. tab:: Turtle
-
-        .. code:: turtle
-
-{turtle}
-
-    .. tab:: With Inline Dependencies
-
-        .. code:: turtle
-
-{inlined_turtle}
-
-Parameters
-----------
-
-{parameter_map}
-
-Dependencies
-------------
-
-{dependencies}
-
-Dependents
-----------
-
-{backlinks}
-
-Graph Visualization
---------------------
-
-.. tabs::
-
-    .. tab:: Template
-
-        .. graphviz::
-
-    {graphviz_simple}
-
-    .. tab:: With Inline Dependencies
-
-        .. graphviz::
-
-    {graphviz_expanded}
+:::{{tab-set}}
+::{{tab-item}} Template
+![]({svg_simple_path})
+::
+::{{tab-item}} With Inline Dependencies
+![]({svg_expanded_path})
+::
+:::
 """
+        with open(os.path.join(lib_output_dir, f"{name}.md"), "w") as f:
+            f.write(md_content)
 
-        # Generate .rst files for each template
-        for templ in lib.get_templates():
-            name = templ.name
-            templ.body.bind("P", rdflib.Namespace("urn:___param___#"))
-            template_names.append(name)
-            parameters = "\n".join(f"- {param}" for param in templ.parameters)
-            dependencies = build_dependencies_string(templ)
-            padding = "#" * len(name)
+    # Generate index.md
+    toc_entries = "\n".join(f"- [{name}]({name}.md)" for name in template_names)
+    index_content = f"""# {lib_name} Templates
 
-            # Generate backlinks section
-            backlinks = "\n".join(f"- :doc:`{dep_name}`" for dep_name in sorted(backlinks_map[name]))
-            if not backlinks:
-                backlinks = "Nothing depends on this template."
-
-            inlined = templ.inline_dependencies()
-            inlined.body.bind("P", rdflib.Namespace("urn:___param___#"))
-
-            # Serialize Turtle representation
-            serialized_body = templ.body.serialize(format="turtle")
-            serialized_body = "\n".join(f"           {line}" for line in serialized_body.split("\n"))
-
-            serialized_inlined = inlined.body.serialize(format="turtle")
-            serialized_inlined = "\n".join(f"            {line}".rstrip() for line in serialized_inlined.split("\n"))
-
-            # Graphviz representations
-            graphviz_simple = build_graphviz(templ.body, indent=2)
-            graphviz_expanded = build_graphviz(inlined.body, indent=2)
-
-            parameter_map = build_dependencies_parameter_string(template_dependency_maps[name])
-
-            # Create .rst content for each template
-            rst_content = rst_template.format(
-                name=name, padding=padding, turtle=serialized_body,
-                inlined_turtle=serialized_inlined,
-                parameters=parameters, dependencies=dependencies,
-                backlinks=backlinks,  # Add backlinks here
-                parameter_map=parameter_map,
-                graphviz_simple=graphviz_simple, graphviz_expanded=graphviz_expanded
-            )
-
-            # Write to a .rst file in the library-specific output directory
-            with open(os.path.join(lib_output_dir, f"{name}.rst"), "w") as f:
-                f.write(rst_content)
-
-        # Generate an index.rst file in the library's subdirectory with a toctree for all template files
-        index_content = f"""
-{lib_name} Templates
-====================
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Template Documentation
-
+{toc_entries}
 """
-        index_content += "\n".join(f"   {name}" for name in template_names)
+    with open(os.path.join(lib_output_dir, "index.md"), "w") as f:
+        f.write(index_content)
 
-        # Write the library's index.rst file in the library-specific output directory
-        with open(os.path.join(lib_output_dir, "index.rst"), "w") as f:
-            f.write(index_content)
+    logger.info(f"Generated {len(template_names)} template docs in {lib_output_dir}")
+    return template_names
 
-        logger.info(f"Generated {len(template_names)} template docs in {lib_output_dir}")
 
-        # Return an empty list as this directive does not produce in-memory nodes
-        return []
+def build_ast_nodes(lib_dir):
+    """Build MyST AST nodes for all templates in a library.
 
-def setup(app):
-    app.add_directive("autotemplatedoc", AutoTemplateDoc)
-    return {
-        'version': '0.1',
-        'parallel_read_safe': True,
-        'parallel_write_safe': True
-    }
+    Returns a list of AST nodes suitable for the mystmd executable plugin protocol.
+    """
+    templates = load_library(lib_dir)
+    nodes = []
+
+    for tmpl in templates:
+        name = tmpl["name"]
+
+        # Heading
+        nodes.append({
+            "type": "heading",
+            "depth": 2,
+            "children": [{"type": "text", "value": name}],
+        })
+
+        # Tabs: Turtle / Inlined
+        nodes.append({
+            "type": "tabSet",
+            "children": [
+                {
+                    "type": "tabItem",
+                    "title": "Turtle",
+                    "children": [
+                        {"type": "code", "lang": "turtle", "value": tmpl["turtle"]},
+                    ],
+                },
+                {
+                    "type": "tabItem",
+                    "title": "With Inline Dependencies",
+                    "children": [
+                        {"type": "code", "lang": "turtle", "value": tmpl["inlined_turtle"]},
+                    ],
+                },
+            ],
+        })
+
+        # Parameters heading
+        nodes.append({
+            "type": "heading",
+            "depth": 3,
+            "children": [{"type": "text", "value": "Parameters"}],
+        })
+
+        param_items = []
+        for param, link_info in tmpl["parameter_map"]:
+            if link_info is None:
+                param_items.append({
+                    "type": "listItem",
+                    "children": [{"type": "paragraph", "children": [
+                        {"type": "text", "value": param},
+                    ]}],
+                })
+            else:
+                ast_link = _build_ast_link(link_info)
+                param_items.append({
+                    "type": "listItem",
+                    "children": [{"type": "paragraph", "children": [
+                        {"type": "text", "value": f"{param} is a "},
+                        ast_link,
+                    ]}],
+                })
+        if param_items:
+            nodes.append({"type": "list", "ordered": False, "children": param_items})
+        else:
+            nodes.append({"type": "paragraph", "children": [
+                {"type": "text", "value": "No parameters."},
+            ]})
+
+        # Dependencies heading
+        nodes.append({
+            "type": "heading",
+            "depth": 3,
+            "children": [{"type": "text", "value": "Dependencies"}],
+        })
+
+        dep_items = []
+        for link_info in tmpl["dependencies"]:
+            ast_link = _build_ast_link(link_info)
+            dep_items.append({
+                "type": "listItem",
+                "children": [{"type": "paragraph", "children": [ast_link]}],
+            })
+        if dep_items:
+            nodes.append({"type": "list", "ordered": False, "children": dep_items})
+        else:
+            nodes.append({"type": "paragraph", "children": [
+                {"type": "text", "value": "No dependencies."},
+            ]})
+
+        # Dependents heading
+        nodes.append({
+            "type": "heading",
+            "depth": 3,
+            "children": [{"type": "text", "value": "Dependents"}],
+        })
+
+        if tmpl["backlinks"]:
+            bl_items = []
+            for bl in tmpl["backlinks"]:
+                bl_items.append({
+                    "type": "listItem",
+                    "children": [{"type": "paragraph", "children": [
+                        _build_ast_link({"text": bl, "doc": bl}),
+                    ]}],
+                })
+            nodes.append({"type": "list", "ordered": False, "children": bl_items})
+        else:
+            nodes.append({"type": "paragraph", "children": [
+                {"type": "text", "value": "Nothing depends on this template."},
+            ]})
+
+        # Graph Visualization heading
+        nodes.append({
+            "type": "heading",
+            "depth": 3,
+            "children": [{"type": "text", "value": "Graph Visualization"}],
+        })
+
+        nodes.append({
+            "type": "tabSet",
+            "children": [
+                {
+                    "type": "tabItem",
+                    "title": "Template",
+                    "children": [
+                        {"type": "html", "value": tmpl["svg_simple"]},
+                    ],
+                },
+                {
+                    "type": "tabItem",
+                    "title": "With Inline Dependencies",
+                    "children": [
+                        {"type": "html", "value": tmpl["svg_expanded"]},
+                    ],
+                },
+            ],
+        })
+
+    return nodes
