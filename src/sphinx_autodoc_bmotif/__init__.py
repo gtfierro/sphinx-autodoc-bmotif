@@ -195,16 +195,19 @@ def generate_md_files(lib_dir, output_dir):
 
         md_content = f"""# {name}
 
-:::{{tab-set}}
-::{{tab-item}} Turtle
+::::{{tab-set}}
+
+:::{{tab-item}} Turtle
 ```turtle
 {tmpl["turtle"]}```
-::
-::{{tab-item}} With Inline Dependencies
+:::
+
+:::{{tab-item}} With Inline Dependencies
 ```turtle
 {tmpl["inlined_turtle"]}```
-::
 :::
+
+::::
 
 ## Parameters
 
@@ -220,14 +223,17 @@ def generate_md_files(lib_dir, output_dir):
 
 ## Graph Visualization
 
-:::{{tab-set}}
-::{{tab-item}} Template
+::::{{tab-set}}
+
+:::{{tab-item}} Template
 ![]({svg_simple_path})
-::
-::{{tab-item}} With Inline Dependencies
-![]({svg_expanded_path})
-::
 :::
+
+:::{{tab-item}} With Inline Dependencies
+![]({svg_expanded_path})
+:::
+
+::::
 """
         with open(os.path.join(lib_output_dir, f"{name}.md"), "w") as f:
             f.write(md_content)
