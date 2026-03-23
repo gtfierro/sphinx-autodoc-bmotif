@@ -1,0 +1,10 @@
+version: 1
+
+project:
+  title: bmotif documentation
+  plugins:
+    - type: executable
+      path: ../src/sphinx_autodoc_bmotif/myst_plugin.py
+
+site:
+  template: book-theme
